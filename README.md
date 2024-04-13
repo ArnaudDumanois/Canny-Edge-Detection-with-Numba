@@ -21,7 +21,10 @@ the magnitude and the direction of the gradient.
 
 - [X] Fix sanitizer error, ask to the teacher
 
-The implementation of the sobel filter is in the file `sobel.py`
+The implementation of the sobel filter is in the file `sobel.py`.    
+the output is the magnitude and the angle, but to generate image Arnaud design a small function, `apply_sobel_to_image` but we need to test it. 
+to be sure that the function is correct and the ouput is correct to. 
+
 
 ## Thresholding
 
