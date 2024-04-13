@@ -4,14 +4,15 @@ from numba import cuda
 import math
 
 
-"""
-np.array([[1, 4, 6, 4, 1],
+
+gaussian_kernel = np.array([[1, 4, 6, 4, 1],
                             [4, 16, 24, 16, 4],
                             [6, 24, 36, 24, 6],
                             [4, 16, 24, 16, 4],
                             [1, 4, 6, 4, 1]])
-"""
-rgb_image = np.array(Image.open("./mona.jpeg"))
+
+# rgb_image = np.array(Image.open("./BW_Image/mona.png"))
+rgb_image = np.array(Image.open("./BW_Image/mona.jpeg"))
 print(rgb_image.shape)
 
 
@@ -25,7 +26,7 @@ def generate_gaussian_kernel(width, sigma):
             kernel[i, j] = np.exp(-((i - center) ** 2 + (j - center) ** 2) / (2 * sigma ** 2))
     return kernel / kernel.sum()
 
-gaussian_kernel = generate_gaussian_kernel(25,120)
+#gaussian_kernel = generate_gaussian_kernel(25,120)
 
 @cuda.jit
 def apply_gaussian_kernel(input, output, kernel):
@@ -67,7 +68,7 @@ def call_gaussian_kernel():
 
     bw_image = d_blurred_image.copy_to_host()
     bw_image = Image.fromarray(bw_image)
-    #bw_image.save("mona_blur.png")
-    bw_image.save("mona_blur.jpeg")
+    #bw_image.save("./Blur_Image/mona_blur.png")
+    bw_image.save("./Blur_Image/mona_blur.jpeg")
 
 call_gaussian_kernel()

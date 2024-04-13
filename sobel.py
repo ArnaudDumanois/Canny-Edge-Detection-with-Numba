@@ -2,7 +2,6 @@ import numpy as np
 from PIL import Image
 from numba import cuda
 import math
-import cv2
 
 sobel_x = np.array([[-1, 0, 1],
                     [-2, 0, 2],
@@ -12,7 +11,8 @@ sobel_y = np.array([[-1, -2, -1],
                     [0, 0, 0],
                     [1, 2, 1]])
 
-blur_image = np.array(Image.open("./mona_blur.jpeg"))
+blur_image = np.array(Image.open("./Blur_Image/mona_blur.png"))
+#blur_image = np.array(Image.open("./Blur_Image/mona_blur.jpeg"))
 
 @cuda.jit
 def apply_sobel_kernel(input, output_magnitude, output_angle):
@@ -54,18 +54,27 @@ def call_sobel_kernel():
 
     return magnitude, angle
 
-def apply_sobel_to_image(image):
 
-    _, binary_magnitude = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)
+def apply_sobel_to_image(image, magnitude):
+    sobel_image = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+    for i in range(image.shape[0]):
+        for j in range(image.shape[1]):
+            sobel_image[i, j] = min(255, max(0, int(magnitude[i, j])))
+    return sobel_image
+
 
 
 magnitude, angle = call_sobel_kernel()
 
-# on enregistre les images
-magnitude = Image.fromarray((magnitude * 255).astype(np.uint8))
+# Appliquer les gradients
+sobel_image = apply_sobel_to_image(blur_image, magnitude)
 
-magnitude.save("mona_magnitude.jpeg")
-angle.save("mona_angle.jpeg")
+# Enregistrer les images
+sobel_image = Image.fromarray(sobel_image)
+sobel_image.save("./Sobel_Image/mona_sobel.png")
+#sobel_image.save("./Sobel_Image/mona_sobel.jpeg")
+
+
 
 
 
