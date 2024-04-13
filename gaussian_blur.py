@@ -33,7 +33,7 @@ gaussian_kernel = generate_gaussian_kernel(25,120)
 @cuda.jit
 def apply_gaussian_kernel(input, output, kernel):
       x, y = cuda.grid(2)
-      if y < input.shape[1] and x < input.shape[0]:
+      if x < input.shape[0] and y < input.shape[1]:
           for c in range(input.shape[2]):
             kernel_sum = 0
             weighted_sum = 0
@@ -41,12 +41,9 @@ def apply_gaussian_kernel(input, output, kernel):
               for b in range(kernel.shape[1]):
                 nx = x + a - kernel.shape[0] // 2
                 ny = y + b - kernel.shape[1] // 2
-                if nx < 0 or nx >= input.shape[1] :
-                    nx = x
-                if ny < 0 or ny >= input.shape[0] :
-                    ny = y
-                kernel_sum += kernel[a,b]
-                weighted_sum += kernel[a,b] * input[nx,ny,c]
+                if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:  # Correction ici : vérification des limites de l'image
+                    kernel_sum += kernel[a, b]
+                    weighted_sum += kernel[a, b] * input[nx, ny, c]
             output[x,y,c] = weighted_sum // kernel_sum
 
 
@@ -62,7 +59,7 @@ def call_kernel():
     block_size = (32, 32)
     grid_size = compute_thread_blocks(rgb_image, block_size)
 
-    print("Size de la grid",grid_size)
+    #print("Size de la grid",grid_size)
     d_rgb_image = cuda.to_device(rgb_image)
     d_blurred_image = cuda.device_array((rgb_image.shape[0], rgb_image.shape[1], rgb_image.shape[2]), dtype=np.uint8)
     d_kernel = cuda.to_device(gaussian_kernel)
