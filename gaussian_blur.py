@@ -27,9 +27,6 @@ def generate_gaussian_kernel(width, sigma):
 
 gaussian_kernel = generate_gaussian_kernel(25,120)
 
-# test the function
-# print(generate_gaussian_kernel(7, 1))
-
 @cuda.jit
 def apply_gaussian_kernel(input, output, kernel):
       x, y = cuda.grid(2)
@@ -55,7 +52,7 @@ def compute_thread_blocks(imagetab, block_size):
     return blockspergrid
 
 
-def call_kernel():
+def call_gaussian_kernel():
     block_size = (32, 32)
     grid_size = compute_thread_blocks(rgb_image, block_size)
 
@@ -73,4 +70,4 @@ def call_kernel():
     #bw_image.save("mona_blur.png")
     bw_image.save("mona_blur.jpeg")
 
-call_kernel()
+call_gaussian_kernel()
