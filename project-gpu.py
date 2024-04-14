@@ -1,5 +1,5 @@
 import argparse
-from numba import cuda
+from numba import cuda, types
 import numpy as np
 from PIL import Image
 import math
@@ -36,8 +36,19 @@ def bw_kernel(input, output):
         output[i, j] = 0.3 * input[i, j, 0] + 0.59 * input[i, j, 1] + 0.11 * input[i, j, 2]
 
 @cuda.jit
-def gaussian_kernel(input, output, kernel):
-    pass
+def gauss_kernel(input, output, kernel):
+    x, y = cuda.grid(2)
+    if x < input.shape[0] and y < input.shape[1]:
+        kernel_sum = 0
+        weighted_sum = 0
+        for a in range(kernel.shape[0]):
+            for b in range(kernel.shape[1]):
+                nx = x + a - kernel.shape[0] // 2
+                ny = y + b - kernel.shape[1] // 2
+                if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
+                    kernel_sum += kernel[a, b]
+                    weighted_sum += kernel[a, b] * input[nx, ny]
+        output[x, y] = weighted_sum // kernel_sum
 
 @cuda.jit
 def sobel_kernel(input, output_magnitude, output_angle):
@@ -73,20 +84,51 @@ def main():
     # Compute the grid size
     grid_size = compute_thread_blocks(input_image, block_size)
 
-    # Convert the image to black and white because we need for all the other operations
+    # Convert the image to black and white
     s_image = cuda.to_device(input_image)
     d_image = cuda.device_array((input_image.shape[0], input_image.shape[1]), dtype=np.uint8)
     bw_kernel[grid_size, block_size](s_image, d_image)
+    cuda.synchronize()
+    bw_image = d_image.copy_to_host()
 
-
-    # apply the different kernel in fonction of the arguments
+    # Convert the image to black and white if specified
     if args.bw:
-        bw_image = d_image.copy_to_host()
+        print(bw_image.shape)
         bw_image = Image.fromarray(bw_image)
         bw_image.save(args.output)
         return
+
+    d_bw_image = cuda.to_device(bw_image)
+    d_blurred_image = cuda.device_array((bw_image.shape[0], bw_image.shape[1]), dtype=np.uint8)
+    d_kernel = cuda.to_device(gaussian_kernel)
+    gauss_kernel[grid_size, block_size](d_bw_image, d_blurred_image, d_kernel)
+    cuda.synchronize()
+    blurred_image = d_blurred_image.copy_to_host()
+
+    # Apply Gaussian blur if specified
     if args.gauss:
-        pass
+        """
+        # Convert the black and white image to device array
+        d_bw_image = cuda.to_device(bw_image)
+
+        # Allocate device array for blurred image
+        d_blurred_image = cuda.device_array_like(d_bw_image)
+
+        # Convert the Gaussian kernel to device array
+        d_kernel = cuda.to_device(gaussian_kernel)
+
+        # Apply Gaussian blur
+        gauss_kernel[grid_size, block_size](d_bw_image, d_blurred_image, d_kernel)
+        cuda.synchronize()
+
+        # Copy blurred image back to host and save it
+        blurred_image = d_blurred_image.copy_to_host()
+        """
+        blurred_image = Image.fromarray(blurred_image)
+        blurred_image.save(args.output)
+        return
+
+
     if args.sobel:
         pass
     if args.threshold:
