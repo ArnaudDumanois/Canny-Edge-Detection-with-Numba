@@ -52,7 +52,19 @@ def gauss_kernel(input, output, kernel):
 
 @cuda.jit
 def sobel_kernel(input, output_magnitude, output_angle):
-    pass
+    x, y = cuda.grid(2)
+    if x < input.shape[0] and y < input.shape[1]:
+        Gx = 0
+        Gy = 0
+        for i in range(-1, 2):
+            for j in range(-1, 2):
+                nx = x + i
+                ny = y + j
+                if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
+                    Gx += input[nx, ny] * sobel_x[i + 1, j + 1]
+                    Gy += input[nx, ny] * sobel_y[i + 1, j + 1]
+        output_magnitude[x, y] = math.sqrt(Gx ** 2 + Gy ** 2)
+        output_angle[x, y] = math.atan2(Gy, Gx)
 
 @cuda.jit
 def threshold_kernel(input, output, low, high):
@@ -93,7 +105,6 @@ def main():
 
     # Convert the image to black and white if specified
     if args.bw:
-        print(bw_image.shape)
         bw_image = Image.fromarray(bw_image)
         bw_image.save(args.output)
         return
@@ -128,9 +139,19 @@ def main():
         blurred_image.save(args.output)
         return
 
+    d_blurred_image = cuda.to_device(blurred_image)
+    d_magnitude = cuda.device_array((blurred_image.shape[:2]), dtype=np.float32)
+    d_angle = cuda.device_array((blurred_image.shape[:2]), dtype=np.float32)
+    sobel_kernel[grid_size, block_size](d_blurred_image, d_magnitude, d_angle)
+    cuda.synchronize()
+    magnitude = d_magnitude.copy_to_host()
+    angle = d_angle.copy_to_host()
 
     if args.sobel:
-        pass
+        magnitude = Image.fromarray((magnitude).astype(np.uint8))
+        magnitude.save(args.output)
+        return
+
     if args.threshold:
         pass
 
