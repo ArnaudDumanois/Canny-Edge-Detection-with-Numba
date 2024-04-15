@@ -1,8 +1,9 @@
 import argparse
-from numba import cuda, types
+from numba import cuda
 import numpy as np
 from PIL import Image
 import math
+import time
 
 # Define Gaussian kernel
 gaussian_kernel = np.array([[1, 4, 6, 4, 1],
@@ -20,6 +21,10 @@ sobel_y = np.array([[-1, -2, -1],
                     [0, 0, 0],
                     [1, 2, 1]], dtype=np.float32)
 
+# Define low and high threshold
+low_threshold = 51
+high_threshold = 102
+
 
 # Function to compute the number of thread blocks
 def compute_thread_blocks(imagetab, block_size):
@@ -31,6 +36,7 @@ def compute_thread_blocks(imagetab, block_size):
 
 @cuda.jit
 def bw_kernel(input, output):
+    # Convert image to black and white
     i, j = cuda.grid(2)
     if i < input.shape[0] and j < input.shape[1]:
         output[i, j] = 0.3 * input[i, j, 0] + 0.59 * input[i, j, 1] + 0.11 * input[i, j, 2]
@@ -63,19 +69,75 @@ def sobel_kernel(input, output_magnitude, output_angle):
                 if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
                     Gx += input[nx, ny] * sobel_x[i + 1, j + 1]
                     Gy += input[nx, ny] * sobel_y[i + 1, j + 1]
-        output_magnitude[x, y] = math.sqrt(Gx ** 2 + Gy ** 2)
+        magnitude = math.sqrt(Gx ** 2 + Gy ** 2)
+        if magnitude > 175:
+            magnitude = 175  # Clamp the magnitude to 175
+        output_magnitude[x, y] = magnitude
         output_angle[x, y] = math.atan2(Gy, Gx)
 
 @cuda.jit
 def threshold_kernel(input, output, low, high):
-    pass
+    x, y = cuda.grid(2)
+    if x < input.shape[0] and y < input.shape[1]:
+        if input[x, y] < low:
+            output[x, y] = 0
+        elif input[x, y] > high:
+            output[x, y] = 255
+        else:
+            output[x, y] = input[x, y]
 
 @cuda.jit
 def hysteresis_kernel(input, output, low, high):
-    pass
+    x, y = cuda.grid(2)
+    if x < input.shape[0] and y < input.shape[1]:
+        if input[x, y] >= high:
+            output[x, y] = 255
+        elif input[x, y] >= low and is_connected_to_strong_edge(input, x, y, low):
+            output[x, y] = 255
+        else:
+            output[x, y] = 0
+
+@cuda.jit
+def is_connected_to_strong_edge(input, x, y, low):
+    for i in range(-1, 2):
+        for j in range(-1, 2):
+            nx = x + i
+            ny = y + j
+            if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
+                if input[nx, ny] >= low:
+                    return True
+    return False
+
+@cuda.jit
+def non_maximum_suppression(input_magnitude, input_angle, output):
+    x, y = cuda.grid(2)
+    if x > 0 and x < input_magnitude.shape[0] - 1 and y > 0 and y < input_magnitude.shape[1] - 1:
+        angle = input_angle[x, y]
+        mag = input_magnitude[x, y]
+        # Determine the neighboring pixels for interpolation
+        if (angle >= -math.pi/8 and angle < math.pi/8) or (angle >= 7*math.pi/8 or angle < -7*math.pi/8):
+            mag_l = input_magnitude[x, y-1]
+            mag_r = input_magnitude[x, y+1]
+        elif (angle >= math.pi/8 and angle < 3*math.pi/8) or (angle >= -7*math.pi/8 and angle < -5*math.pi/8):
+            mag_l = input_magnitude[x-1, y-1]
+            mag_r = input_magnitude[x+1, y+1]
+        elif (angle >= 3*math.pi/8 and angle < 5*math.pi/8) or (angle >= -5*math.pi/8 and angle < -3*math.pi/8):
+            mag_l = input_magnitude[x-1, y]
+            mag_r = input_magnitude[x+1, y]
+        else:
+            mag_l = input_magnitude[x+1, y-1]
+            mag_r = input_magnitude[x-1, y+1]
+        # Perform non-maximum suppression
+        if mag >= mag_l and mag >= mag_r:
+            output[x, y] = mag
+        else:
+            output[x, y] = 0
+
 
 
 def main():
+    start_time = time.time()
+
     parser = argparse.ArgumentParser(description='Canny Edge Detector')
     parser.add_argument('input', help='Input image')
     parser.add_argument('output', help='Output image')
@@ -89,6 +151,7 @@ def main():
 
     # Load the input image
     input_image = np.array(Image.open(args.input))
+    print(input_image.shape)
 
     # Set the thread block size
     block_size = (args.tb, args.tb)
@@ -107,6 +170,9 @@ def main():
     if args.bw:
         bw_image = Image.fromarray(bw_image)
         bw_image.save(args.output)
+
+        end_time = time.time()
+        print("Execution time: ", end_time - start_time, "s")
         return
 
     d_bw_image = cuda.to_device(bw_image)
@@ -137,6 +203,9 @@ def main():
         """
         blurred_image = Image.fromarray(blurred_image)
         blurred_image.save(args.output)
+
+        end_time = time.time()
+        print("Execution time: ", end_time - start_time, "s")
         return
 
     d_blurred_image = cuda.to_device(blurred_image)
@@ -150,10 +219,46 @@ def main():
     if args.sobel:
         magnitude = Image.fromarray((magnitude).astype(np.uint8))
         magnitude.save(args.output)
+
+        end_time = time.time()
+        print("Execution time: ", end_time - start_time, "s")
         return
 
+    # Apply non-maximum suppression
+    d_magnitude = cuda.to_device(magnitude)
+    d_suppressed_magnitude = cuda.device_array((magnitude.shape[:2]), dtype=np.float32)
+    non_maximum_suppression[grid_size, block_size](d_magnitude, d_angle, d_suppressed_magnitude)
+    cuda.synchronize()
+    suppressed_magnitude = d_suppressed_magnitude.copy_to_host()
+
+    # Apply thresholding
+    d_suppressed_magnitude = cuda.to_device(suppressed_magnitude)
+    d_threshold = cuda.device_array((suppressed_magnitude.shape[:2]), dtype=np.uint8)
+    threshold_kernel[grid_size, block_size](d_suppressed_magnitude, d_threshold, low_threshold, high_threshold)
+    cuda.synchronize()
+    threshold = d_threshold.copy_to_host()
+
     if args.threshold:
-        pass
+        threshold = Image.fromarray(threshold)
+        threshold.save(args.output)
+
+        end_time = time.time()
+        print("Execution time: ", end_time - start_time, "s")
+        return
+
+    d_threshold = cuda.to_device(threshold)
+    d_output = cuda.device_array((threshold.shape[:2]), dtype=np.uint8)
+    hysteresis_kernel[grid_size, block_size](d_threshold, d_output, low_threshold, high_threshold)
+    cuda.synchronize()
+    output = d_output.copy_to_host()
+
+    output = Image.fromarray(output)
+    output.save(args.output)
+
+    end_time = time.time()
+    print("Execution time: ", end_time - start_time, "s")
+    return
+
 
 if __name__ == '__main__':
     main()
