@@ -71,3 +71,5 @@ So our style of programming should be smart and efficient.
 ## Idea TODO 
 
 If you have a Idea to enhance the project, please write it here.
+
+- Maybe we can use prange() with njit(parallel=True) to be more performant.
