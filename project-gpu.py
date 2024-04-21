@@ -28,6 +28,16 @@ high_threshold = 102
 
 # Function to compute the number of thread blocks
 def compute_thread_blocks(imagetab, block_size):
+    """
+    Computes the number of thread blocks required for CUDA operations.
+
+    Args:
+        imagetab (numpy.ndarray): Input image as a NumPy array.
+        block_size (tuple): Size of the thread block in (height, width) format.
+
+    Returns:
+        tuple: Number of thread blocks required in (blockspergrid_y, blockspergrid_x) format.
+    """
     height, width = imagetab.shape[:2]
     blockspergrid_x = math.ceil(width / block_size[0])
     blockspergrid_y = math.ceil(height / block_size[1])
@@ -36,46 +46,78 @@ def compute_thread_blocks(imagetab, block_size):
 
 @cuda.jit
 def bw_kernel(input, output):
-    # Convert image to black and white
+    """
+    CUDA kernel function to convert an RGB image to black and white.
+
+    Args:
+        input (cuda.devicearray.DeviceNDArray): Input RGB image as a device array.
+        output (cuda.devicearray.DeviceNDArray): Output black and white image as a device array.
+    """
     i, j = cuda.grid(2)
     if i < input.shape[0] and j < input.shape[1]:
         output[i, j] = 0.3 * input[i, j, 0] + 0.59 * input[i, j, 1] + 0.11 * input[i, j, 2]
 
 @cuda.jit
 def gauss_kernel(input, output, kernel):
+    """
+    CUDA kernel function to apply Gaussian blur to an image.
+
+    Args:
+        input (cuda.devicearray.DeviceNDArray): Input image as a device array.
+        output (cuda.devicearray.DeviceNDArray): Output blurred image as a device array.
+        kernel (numpy.ndarray): Gaussian kernel matrix.
+    """
     x, y = cuda.grid(2)
-    if x < input.shape[0] and y < input.shape[1]:
-        kernel_sum = 0
-        weighted_sum = 0
-        for a in range(kernel.shape[0]):
-            for b in range(kernel.shape[1]):
-                nx = x + a - kernel.shape[0] // 2
-                ny = y + b - kernel.shape[1] // 2
-                if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
-                    kernel_sum += kernel[a, b]
-                    weighted_sum += kernel[a, b] * input[nx, ny]
-        output[x, y] = weighted_sum // kernel_sum
+    if x >= input.shape[0] or y >= input.shape[1]:
+        return
+    kernel_sum = 0
+    weighted_sum = 0
+    for a in range(kernel.shape[0]):
+        for b in range(kernel.shape[1]):
+            nx = x + a - kernel.shape[0] // 2
+            ny = y + b - kernel.shape[1] // 2
+            if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
+                kernel_sum += kernel[a, b]
+                weighted_sum += kernel[a, b] * input[nx, ny]
+    output[x, y] = weighted_sum // kernel_sum    
 
 @cuda.jit
 def sobel_kernel(input, output_magnitude):
+    """
+    CUDA kernel function to apply the Sobel operator to an image.
+
+    Args:
+        input (cuda.devicearray.DeviceNDArray): Input image as a device array.
+        output_magnitude (cuda.devicearray.DeviceNDArray): Output magnitude image as a device array.
+    """
     x, y = cuda.grid(2)
-    if x < input.shape[0] and y < input.shape[1]:
-        Gx = 0
-        Gy = 0
-        for i in range(-1, 2):
-            for j in range(-1, 2):
-                nx = x + i
-                ny = y + j
-                if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
-                    Gx += input[nx, ny] * sobel_x[i + 1, j + 1]
-                    Gy += input[nx, ny] * sobel_y[i + 1, j + 1]
-        magnitude = math.sqrt(Gx ** 2 + Gy ** 2)
-        if magnitude > 175:
-            magnitude = 175  # Clamp the magnitude to 175
-        output_magnitude[x, y] = magnitude
+    if x >= input.shape[0] or y >= input.shape[1]:
+        return
+    Gx = 0
+    Gy = 0
+    for i in range(-1, 2):
+        for j in range(-1, 2):
+            nx = x + i
+            ny = y + j
+            if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
+                Gx += input[nx, ny] * sobel_x[i + 1, j + 1]
+                Gy += input[nx, ny] * sobel_y[i + 1, j + 1]
+    magnitude = math.sqrt(Gx ** 2 + Gy ** 2)
+    if magnitude > 175:
+        magnitude = 175  # Clamp the magnitude to 175
+    output_magnitude[x, y] = magnitude
 
 @cuda.jit
 def threshold_kernel(input, output, low, high):
+    """
+    CUDA kernel function to apply thresholding to an image.
+
+    Args:
+        input (cuda.devicearray.DeviceNDArray): Input image as a device array.
+        output (cuda.devicearray.DeviceNDArray): Output thresholded image as a device array.
+        low (int): Low threshold value.
+        high (int): High threshold value.
+    """
     x, y = cuda.grid(2)
     if x < input.shape[0] and y < input.shape[1]:
         if input[x, y] < low:
@@ -87,6 +129,15 @@ def threshold_kernel(input, output, low, high):
 
 @cuda.jit
 def hysteresis_kernel(input, output, low, high):
+    """
+    CUDA kernel function to apply hysteresis thresholding to an image.
+
+    Args:
+        input (cuda.devicearray.DeviceNDArray): Input image as a device array.
+        output (cuda.devicearray.DeviceNDArray): Output hysteresis thresholded image as a device array.
+        low (int): Low threshold value.
+        high (int): High threshold value.
+    """
     x, y = cuda.grid(2)
     if x < input.shape[0] and y < input.shape[1]:
         if input[x, y] >= high:
@@ -98,6 +149,18 @@ def hysteresis_kernel(input, output, low, high):
 
 @cuda.jit
 def is_connected_to_strong_edge(input, x, y, low):
+    """
+    Determines if a pixel is connected to a strong edge in the image.
+
+    Args:
+        input (cuda.devicearray.DeviceNDArray): Input image as a device array.
+        x (int): X-coordinate of the pixel.
+        y (int): Y-coordinate of the pixel.
+        low (int): Low threshold value.
+
+    Returns:
+        bool: True if the pixel is connected to a strong edge, False otherwise.
+    """
     for i in range(-1, 2):
         for j in range(-1, 2):
             nx = x + i
@@ -106,9 +169,6 @@ def is_connected_to_strong_edge(input, x, y, low):
                 if input[nx, ny] >= low:
                     return True
     return False
-
-
-
 
 def main():
     start_time = time.time()
@@ -159,23 +219,6 @@ def main():
 
     # Apply Gaussian blur if specified
     if args.gauss:
-        """
-        # Convert the black and white image to device array
-        d_bw_image = cuda.to_device(bw_image)
-
-        # Allocate device array for blurred image
-        d_blurred_image = cuda.device_array_like(d_bw_image)
-
-        # Convert the Gaussian kernel to device array
-        d_kernel = cuda.to_device(gaussian_kernel)
-
-        # Apply Gaussian blur
-        gauss_kernel[grid_size, block_size](d_bw_image, d_blurred_image, d_kernel)
-        cuda.synchronize()
-
-        # Copy blurred image back to host and save it
-        blurred_image = d_blurred_image.copy_to_host()
-        """
         blurred_image = Image.fromarray(blurred_image)
         blurred_image.save(args.output)
 
