@@ -57,7 +57,7 @@ def gauss_kernel(input, output, kernel):
         output[x, y] = weighted_sum // kernel_sum
 
 @cuda.jit
-def sobel_kernel(input, output_magnitude, output_angle):
+def sobel_kernel(input, output_magnitude):
     x, y = cuda.grid(2)
     if x < input.shape[0] and y < input.shape[1]:
         Gx = 0
@@ -73,7 +73,6 @@ def sobel_kernel(input, output_magnitude, output_angle):
         if magnitude > 175:
             magnitude = 175  # Clamp the magnitude to 175
         output_magnitude[x, y] = magnitude
-        output_angle[x, y] = math.atan2(Gy, Gx)
 
 @cuda.jit
 def threshold_kernel(input, output, low, high):
@@ -186,8 +185,7 @@ def main():
 
     d_blurred_image = cuda.to_device(blurred_image)
     d_magnitude = cuda.device_array((blurred_image.shape[:2]), dtype=np.float32)
-    d_angle = cuda.device_array((blurred_image.shape[:2]), dtype=np.float32)
-    sobel_kernel[grid_size, block_size](d_blurred_image, d_magnitude, d_angle)
+    sobel_kernel[grid_size, block_size](d_blurred_image, d_magnitude)
     cuda.synchronize()
     magnitude = d_magnitude.copy_to_host()
 
