@@ -85,7 +85,7 @@ def run_benchmark(input_path, output_path, args):
 
     d_threshold = cuda.to_device(threshold)
     d_output = cuda.device_array((threshold.shape[:2]), dtype=np.uint8)
-    project_gpu.hysteresis_kernel[grid_size, block_size](d_threshold, d_output, LOW_THRESHOLD, HIGH_THRESHOLD)
+    project_gpu.hysteresis_kernel[grid_size, block_size](d_threshold, d_output)
     cuda.synchronize()
     output = d_output.copy_to_host()
 

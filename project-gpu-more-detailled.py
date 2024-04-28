@@ -79,7 +79,7 @@ def gauss_kernel(input, output, kernel):
             if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
                 kernel_sum += kernel[a, b]
                 weighted_sum += kernel[a, b] * input[nx, ny]
-    output[x, y] = weighted_sum // kernel_sum
+    output[x, y] = weighted_sum // kernel_sum    
 
 @cuda.jit
 def sobel_kernel(input, output_magnitude):
@@ -102,10 +102,9 @@ def sobel_kernel(input, output_magnitude):
             if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
                 Gx += input[nx, ny] * sobel_x[i + 1, j + 1]
                 Gy += input[nx, ny] * sobel_y[i + 1, j + 1]
-    # clamp Gx and Gy to 175
-    Gx = min(175, Gx)
-    Gy = min(175, Gy)
     magnitude = math.sqrt(Gx ** 2 + Gy ** 2)
+    if magnitude > 175:
+        magnitude = 175  # Clamp the magnitude to 175
     output_magnitude[x, y] = magnitude
 
 @cuda.jit
@@ -126,29 +125,30 @@ def threshold_kernel(input, output, low, high):
         elif input[x, y] > high:
             output[x, y] = 255
         else:
-            output[x, y] = 127
+            output[x, y] = input[x, y]
 
 @cuda.jit
-def hysteresis_kernel(input, output):
+def hysteresis_kernel(input, output, low, high):
     """
     CUDA kernel function to apply hysteresis thresholding to an image.
 
     Args:
         input (cuda.devicearray.DeviceNDArray): Input image as a device array.
         output (cuda.devicearray.DeviceNDArray): Output hysteresis thresholded image as a device array.
+        low (int): Low threshold value.
+        high (int): High threshold value.
     """
     x, y = cuda.grid(2)
     if x < input.shape[0] and y < input.shape[1]:
-        pixel_value = input[x, y]
-        if pixel_value == 255:
+        if input[x, y] >= high:
             output[x, y] = 255
-        elif pixel_value == 127 and is_connected_to_strong_edge(input, x, y):
+        elif input[x, y] >= low and is_connected_to_strong_edge(input, x, y, low):
             output[x, y] = 255
         else:
             output[x, y] = 0
 
 @cuda.jit
-def is_connected_to_strong_edge(input, x, y):
+def is_connected_to_strong_edge(input, x, y, low):
     """
     Determines if a pixel is connected to a strong edge in the image.
 
@@ -156,21 +156,19 @@ def is_connected_to_strong_edge(input, x, y):
         input (cuda.devicearray.DeviceNDArray): Input image as a device array.
         x (int): X-coordinate of the pixel.
         y (int): Y-coordinate of the pixel.
+        low (int): Low threshold value.
 
     Returns:
         bool: True if the pixel is connected to a strong edge, False otherwise.
     """
     for i in range(-1, 2):
         for j in range(-1, 2):
-            if i == 0 and j == 0:  # Skip the central pixel
-                continue
             nx = x + i
             ny = y + j
             if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
-                if input[nx, ny] == 255:
+                if input[nx, ny] >= low:
                     return True
     return False
-
 
 def main():
     start_time = time.time()
@@ -261,7 +259,7 @@ def main():
 
     d_threshold = cuda.to_device(threshold)
     d_output = cuda.device_array((threshold.shape[:2]), dtype=np.uint8)
-    hysteresis_kernel[grid_size, block_size](d_threshold, d_output)
+    hysteresis_kernel[grid_size, block_size](d_threshold, d_output, low_threshold, high_threshold)
     cuda.synchronize()
     output = d_output.copy_to_host()
 
