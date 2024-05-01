@@ -173,7 +173,6 @@ def is_connected_to_strong_edge(input, x, y):
 
 
 def main():
-    start_time = time.time()
 
     parser = argparse.ArgumentParser(description='Canny Edge Detector')
     parser.add_argument('input', help='Input image')
@@ -188,7 +187,6 @@ def main():
 
     # Load the input image
     input_image = np.array(Image.open(args.input))
-    print(input_image.shape)
 
     # Set the thread block size
     block_size = (args.tb, args.tb)
@@ -207,9 +205,6 @@ def main():
     if args.bw:
         bw_image = Image.fromarray(bw_image)
         bw_image.save(args.output)
-
-        end_time = time.time()
-        print("Execution time: ", end_time - start_time, "s")
         return
 
     d_bw_image = cuda.to_device(bw_image)
@@ -223,9 +218,6 @@ def main():
     if args.gauss:
         blurred_image = Image.fromarray(blurred_image)
         blurred_image.save(args.output)
-
-        end_time = time.time()
-        print("Execution time: ", end_time - start_time, "s")
         return
 
     d_blurred_image = cuda.to_device(blurred_image)
@@ -237,9 +229,6 @@ def main():
     if args.sobel:
         magnitude = Image.fromarray((magnitude).astype(np.uint8))
         magnitude.save(args.output)
-
-        end_time = time.time()
-        print("Execution time: ", end_time - start_time, "s")
         return
 
 
@@ -254,9 +243,6 @@ def main():
     if args.threshold:
         threshold = Image.fromarray(threshold)
         threshold.save(args.output)
-
-        end_time = time.time()
-        print("Execution time: ", end_time - start_time, "s")
         return
 
     d_threshold = cuda.to_device(threshold)
@@ -268,8 +254,6 @@ def main():
     output = Image.fromarray(output)
     output.save(args.output)
 
-    end_time = time.time()
-    print("Execution time: ", end_time - start_time, "s")
     return
 
 
