@@ -44,7 +44,7 @@ def compute_thread_blocks(imagetab, block_size):
     blockspergrid = (blockspergrid_y, blockspergrid_x)
     return blockspergrid
 
-@cuda.jit
+@cuda.jit("void(uint8[:, :, :], uint8[:, :])")
 def bw_kernel(input, output):
     """
     CUDA kernel function to convert an RGB image to black and white.
@@ -55,9 +55,9 @@ def bw_kernel(input, output):
     """
     i, j = cuda.grid(2)
     if i < input.shape[0] and j < input.shape[1]:
-        output[i, j] = 0.3 * input[i, j, 0] + 0.59 * input[i, j, 1] + 0.11 * input[i, j, 2]
+        output[i, j] = int(math.ceil(0.3 * input[i, j, 0] + 0.59 * input[i, j, 1] + 0.11 * input[i, j, 2]))
 
-@cuda.jit
+@cuda.jit("void(uint8[:, :], uint8[:, :], float32[:, :])")
 def gauss_kernel(input, output, kernel):
     """
     CUDA kernel function to apply Gaussian blur to an image.
@@ -79,9 +79,9 @@ def gauss_kernel(input, output, kernel):
             if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
                 kernel_sum += kernel[a, b]
                 weighted_sum += kernel[a, b] * input[nx, ny]
-    output[x, y] = weighted_sum // kernel_sum
+    output[x, y] = int(math.ceil(weighted_sum // kernel_sum))
 
-@cuda.jit
+@cuda.jit("void(uint8[:, :], uint8[:, :])")
 def sobel_kernel(input, output_magnitude):
     """
     CUDA kernel function to apply the Sobel operator to an image.
@@ -102,13 +102,13 @@ def sobel_kernel(input, output_magnitude):
             if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
                 Gx += input[nx, ny] * sobel_x[i + 1, j + 1]
                 Gy += input[nx, ny] * sobel_y[i + 1, j + 1]
-    # clamp Gx and Gy to 175
+    # Clamp Gx and Gy at 175
     Gx = min(175, Gx)
     Gy = min(175, Gy)
-    magnitude = math.sqrt(Gx ** 2 + Gy ** 2)
-    output_magnitude[x, y] = magnitude
+    # Compute the gradient magnitude
+    output_magnitude[x, y] = int(math.ceil(math.sqrt(Gx ** 2 + Gy ** 2)))
 
-@cuda.jit
+@cuda.jit("void(uint8[:, :], uint8[:, :], uint8, uint8)")
 def threshold_kernel(input, output, low, high):
     """
     CUDA kernel function to apply thresholding to an image.
@@ -128,7 +128,7 @@ def threshold_kernel(input, output, low, high):
         else:
             output[x, y] = 127
 
-@cuda.jit
+@cuda.jit("void(uint8[:, :], uint8[:, :])")
 def hysteresis_kernel(input, output):
     """
     CUDA kernel function to apply hysteresis thresholding to an image.
@@ -142,34 +142,21 @@ def hysteresis_kernel(input, output):
         pixel_value = input[x, y]
         if pixel_value == 255:
             output[x, y] = 255
-        elif pixel_value == 127 and is_connected_to_strong_edge(input, x, y):
-            output[x, y] = 255
+        elif pixel_value == 127:
+            # Check if the pixel is connected to a strong edge
+            for i in range(-1, 2):
+                for j in range(-1, 2):
+                    if i == 0 and j == 0:  # Skip the central pixel
+                        continue
+                    nx = x + i
+                    ny = y + j
+                    if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
+                        if input[nx, ny] == 255:
+                            output[x, y] = 255
+                            return
+            output[x, y] = 0
         else:
             output[x, y] = 0
-
-@cuda.jit
-def is_connected_to_strong_edge(input, x, y):
-    """
-    Determines if a pixel is connected to a strong edge in the image.
-
-    Args:
-        input (cuda.devicearray.DeviceNDArray): Input image as a device array.
-        x (int): X-coordinate of the pixel.
-        y (int): Y-coordinate of the pixel.
-
-    Returns:
-        bool: True if the pixel is connected to a strong edge, False otherwise.
-    """
-    for i in range(-1, 2):
-        for j in range(-1, 2):
-            if i == 0 and j == 0:  # Skip the central pixel
-                continue
-            nx = x + i
-            ny = y + j
-            if nx >= 0 and ny >= 0 and nx < input.shape[0] and ny < input.shape[1]:
-                if input[nx, ny] == 255:
-                    return True
-    return False
 
 
 def main():
@@ -221,7 +208,7 @@ def main():
         return
 
     d_blurred_image = cuda.to_device(blurred_image)
-    d_magnitude = cuda.device_array((blurred_image.shape[:2]), dtype=np.float32)
+    d_magnitude = cuda.device_array((blurred_image.shape[:2]), dtype=np.uint8)
     sobel_kernel[grid_size, block_size](d_blurred_image, d_magnitude)
     cuda.synchronize()
     magnitude = d_magnitude.copy_to_host()

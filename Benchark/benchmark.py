@@ -65,7 +65,7 @@ def run_benchmark(input_path, output_path, args):
     start_time = time.time()
 
     d_blurred_image = cuda.to_device(blurred_image)
-    d_magnitude = cuda.device_array((blurred_image.shape[:2]), dtype=np.float32)
+    d_magnitude = cuda.device_array((blurred_image.shape[:2]), dtype=np.uint8)
     project_gpu.sobel_kernel[grid_size, block_size](d_blurred_image, d_magnitude)
     cuda.synchronize()
     magnitude = d_magnitude.copy_to_host()
